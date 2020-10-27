@@ -16,6 +16,7 @@ import ntpath
 import json
 import glob
 import urllib.request
+import time
 
 """
    _____ _______    _______            __  __ _    _ _______    _______ _____ ____  _   _ 
@@ -309,6 +310,19 @@ class RnaseqSnp:
         self.HaplotypeCaller_CNN = args_parsed.HaplotypeCaller_CNN
         self.Mutect2_include_contamination_estimates = args_parsed.Mutect2_include_contamination_estimates
         
+        ## Boosting attributes settings.
+        BOOST_ATTRIBUTES_AVAILABLE = ( "QD","ReadPosRankSum","FS","SPLICEADJ","RPT","Homopolymer","Entropy","RNAEDIT",
+                                       "VPR","VAF","VMMF", "PctExtPos" ,"RS")
+
+        self.boost_attributes_list = args_parsed.boosting_attributes.split(",")
+        for boost_att in self.boost_attributes_list:
+            if boost_att not in BOOST_ATTRIBUTES_AVAILABLE:
+                raise RuntimeError("Error, boost attribute \"{}\" is not recognized as an available option".format(boost_att))
+
+        if args_parsed.no_include_read_var_pos_annotations:
+            for boost_att in ("VPR","VAF","VMMF", "PctExtPos"):
+                if boost_att in self.boost_attributes_list:
+                    self.boost_attributes_list.remove(boost_att)
 
         return
 
@@ -966,7 +980,8 @@ class RnaseqSnp:
                                       variants_vcf_file,
                                       str_clean_vcf])
         
-        lcmd_commands.append(Command(str_clean_vcf_cmd,'vcf_clean.ok'))
+        lcmd_commands.append(Command(str_clean_vcf_cmd,'vcf_clean_{}.ok'.format(self.args.boosting_method+'_'+self.args.predictor)))
+
         
 
 
@@ -1257,7 +1272,7 @@ class RnaseqSnp:
                                       full_variant_set_with_cravat_vcf,
                                       full_variant_set_with_cravat_clean_vcf])
         
-        lcmd_commands.append(Command(str_clean_vcf_cmd,'cravat_annotations_to_full_vcf_clean.ok'))
+        lcmd_commands.append(Command(str_clean_vcf_cmd,'cravat_annotations_to_full_vcf_clean_{}.ok'.format(format(self.args.boosting_method+'_'+self.args.predictor))))
 
 
 
@@ -1266,10 +1281,6 @@ class RnaseqSnp:
         full_variant_set_with_cravat_clean_vcf = full_variant_set_with_cravat_clean_vcf + ".gz"
         
         return (lcmd_commands, full_variant_set_with_cravat_clean_vcf)
-
-    
-
-
 
     
     def get_CRAVAT_annotations(self,
@@ -1285,7 +1296,7 @@ class RnaseqSnp:
         str_cancer_filter_command = " ".join([os.path.sep.join([SCRIPTDIR, "filter_vcf_for_cancer.py"]), # retain cosmic, remove common, req depth>=10, remove rna-editing. See script for details.
                                               str_variants_file,
                                               str_filtered_pre_cravat_vcf])
-        lcmd_cancer_filter.append(Command(str_cancer_filter_command,'variant_filter_before_cravat.ok'))
+        lcmd_cancer_filter.append(Command(str_cancer_filter_command,'variant_filter_before_cravat_{}.ok'.format(self.args.boosting_method+'_'+self.args.predictor)))
 
 
         #################
@@ -1399,7 +1410,7 @@ class RnaseqSnp:
         str_cmd_filter_predictions = " ".join([os.path.sep.join([SCRIPTDIR, "filter_vcf_for_cancer_prediction_report.py"]),
                                                str_variants_vcf_file,
                                                str_pred_filtered_vcf])
-        lcmd_commands.append(Command(str_cmd_filter_predictions,'extract_cancer_predictions.ok'))
+        lcmd_commands.append(Command(str_cmd_filter_predictions,'extract_cancer_predictions_{}.ok'.format(format(self.args.boosting_method+'_'+self.args.predictor))))
 
                 
         # Groom before table conversion
@@ -1407,7 +1418,7 @@ class RnaseqSnp:
         str_cmd_groom_cancer_filtered = " ".join([os.path.sep.join([SCRIPTDIR, "groom_vcf.py"]),
                                                   str_pred_filtered_vcf,
                                                   str_cancer_vcf_file])
-        lcmd_commands.append(Command(str_cmd_groom_cancer_filtered,'groom_cancer_vcf.ok'))
+        lcmd_commands.append(Command(str_cmd_groom_cancer_filtered,'groom_cancer_vcf_{}.ok'.format(format(self.args.boosting_method+'_'+self.args.predictor))))
         
         # Convert filtered VCF file to tab file.
         str_cancer_tab_file = os.path.join(self.out_dir, C_STR_CANCER_TAB)
@@ -1432,7 +1443,7 @@ class RnaseqSnp:
                                             "-F", "MuPIT",
                                             "--lenient",
                                             "-O", str_cancer_tab_file])
-        lcmd_commands.append(Command(str_cmd_make_cravat_tab,'vcf_tab.ok'))
+        lcmd_commands.append(Command(str_cmd_make_cravat_tab,'vcf_tab_{}.ok'.format(format(self.args.boosting_method+'_'+self.args.predictor))))
 
 
 
@@ -1451,7 +1462,7 @@ class RnaseqSnp:
                                       "--tracks", bam_target_for_var_calling, self.ref_gene_annotation_bed+".gz",
                                       "--output", html_out])
 
-            lcmd_commands.append(Command(str_cmd_html, 'igv_html_viz.ok'))
+            lcmd_commands.append(Command(str_cmd_html, 'igv_html_viz_{}.ok'.format(format(self.args.boosting_method+'_'+self.args.predictor))))
 
 
 
@@ -1757,7 +1768,12 @@ class RnaseqSnp:
             cmds, variants_vcf_file = self.run_boosting_RVBLR(variants_vcf_file)
             return (cmds, variants_vcf_file)
 
+        elif boost_method in ("none", "RVBLR", "RF", "AdaBoost", "SGBoost", "GBoost", "NGBoost", "SVML", "SVM_RBF", "LR"):
+            cmds, variants_vcf_file = self.run_boosting_pyCTAT_classifier(variants_vcf_file, boost_method)
+            return (cmds, variants_vcf_file)
+        
         raise RuntimeError("Error, not recognizing boost method: {}".format(boost_method))
+
 
 
     def run_boosting_RVBLR(self, variants_vcf_file):
@@ -1776,7 +1792,7 @@ class RnaseqSnp:
 
         final_variants_vcf_filename = os.path.join(outdir, os.path.basename(variants_vcf_file) + ".RVBLR_min{:.3f}.vcf".format(score_threshold))
 
-        boost_attribute_list = ["QD","ReadPosRankSum","FS","SPLICEADJ","RPT","Homopolymer","Entropy","RNAEDIT"]
+        boost_attribute_list = ["QD","ReadPosRankSum","FS","SPLICEADJ","RPT","Homopolymer","Entropy","RNAEDIT","RS"]
         
         if not self.args.no_include_read_var_pos_annotations:
             boost_attribute_list.extend(["VPR","VAF","VMMF", "PctExtPos"])
@@ -1792,6 +1808,103 @@ class RnaseqSnp:
         
 
         return (cmds_list, final_variants_vcf_filename)
+
+
+
+    def run_boosting_pyCTAT_classifier(self, variants_vcf_file, boost_method):
+
+        tmpdir = self.tmp_dir
+        outdir = self.out_dir
+
+        boost_workdir = os.path.join(tmpdir, "{}_workdir".format(boost_method+self.args.predictor))
+        if not os.path.exists(boost_workdir):
+            os.makedirs(boost_workdir)
+
+        
+        cmds_list = list()
+
+        #####################################
+        ## Split VCF into snps and indels ###
+        #####################################
+        cmd = " ".join([ os.path.join(SCRIPTDIR, "separate_snps_indels.py"),
+                         "--vcf", variants_vcf_file, 
+                         "--outdir", outdir  ])
+
+        cmds_list.append(Command(cmd, "separated-{}.ok".format(boost_method+self.args.predictor)))
+
+        ##################################################
+        ### Run Boosting on INDELs and SNPs separately ###
+        ##################################################
+
+        boost_attribute_list = self.boost_attributes_list
+        
+        if not "RS" in boost_attribute_list:
+            boost_attribute_list.append("RS")
+
+        ## INDELs
+        cmd = " ".join([ os.path.join(SCRIPTDIR, "VariantBoosting/PyBoost/CTAT_Boosting_combined2.py"),
+                         "--vcf", os.path.join(outdir,'variants.HC_init.wAnnot.indels.vcf.gz'), 
+                         "--features {}".format(",".join(boost_attribute_list)),
+                         "--out", boost_workdir,
+                         "--model {}".format(boost_method),
+                         "--indels"])
+        
+        cmds_list.append(Command(cmd, "boosting-indels{}.ok".format(boost_method+self.args.predictor)))
+
+        ## SNPs
+        cmd = " ".join([ os.path.join(SCRIPTDIR, "VariantBoosting/PyBoost/CTAT_Boosting_combined2.py"),
+                         "--vcf", os.path.join(outdir,'variants.HC_init.wAnnot.snps.vcf.gz'), 
+                         "--features {}".format(",".join(boost_attribute_list)),
+                         "--out", boost_workdir,
+                         "--model {}".format(boost_method),
+                         "--snps"])
+
+        cmds_list.append(Command(cmd, "boosting-snps{}.ok".format(boost_method+self.args.predictor)))
+
+        ## bgzip
+        cmd_bgzip = " ".join(['ls',''.join(os.path.join(outdir,boost_workdir,"*.vcf")),
+            "|","xargs", "-n1", "bgzip", "-f" ])
+
+        cmds_list.append(Command(cmd_bgzip, "bg-{}.ok".format(boost_method+self.args.predictor)))
+        
+        
+        ##################################################
+        #### Merge boosted INDELs and SNPs separately ####
+        ##################################################
+        
+        snps_boost = os.path.join(boost_workdir, boost_method + '_' + self.args.predictor +'_ctat_boosting_snps.vcf.gz')
+        indels_boost = os.path.join(boost_workdir, boost_method + '_' + self.args.predictor + '_ctat_boosting_indels.vcf.gz')
+
+        self.tabix_if_needed(cmds_list, snps_boost)
+        self.tabix_if_needed(cmds_list, indels_boost)
+    
+        boost_output_filename = os.path.join(boost_workdir, "{}_ctat_boosting.vcf.gz".format(boost_method+self.args.predictor))
+        
+
+        cmdstr = " ".join(["bcftools merge", snps_boost, indels_boost,
+                                   "-Oz ", "-o", boost_output_filename, 
+                                   '--force-samples'
+                                   ])
+        cmds_list.append(Command(cmdstr, "merge-{}.ok".format(boost_method+self.args.predictor) ))
+
+        cmdstr = " ".join(["gunzip", boost_output_filename ])
+        cmds_list.append(Command(cmdstr, "gunzip{}.ok".format(boost_method+self.args.predictor) ))
+
+        # copy output vcf to final output directory
+        final_variants_vcf_filename = os.path.join(outdir, os.path.basename(variants_vcf_file) + ".{}.vcf".format(boost_method+self.args.predictor))
+
+        cmds_list.append(Command("cp {} {}".format(os.path.join(boost_workdir, "{}_ctat_boosting.vcf".format(boost_method+self.args.predictor)), final_variants_vcf_filename), "cp_to_final_boost_{}.ok".format(boost_method+self.args.predictor)))
+        
+
+        return (cmds_list, final_variants_vcf_filename)
+
+
+
+
+###############
+## end of class 
+###############
+
     
 
 
@@ -1897,12 +2010,18 @@ def make_menu():
                           action='store_true', default=False,
                           help="Compute and include tumor contamination estimates in Mutect2 variant filtration")
 
-
-    optional.add_argument("--boosting_method", default="none", choices = ["none", "RVBLR"],
+    optional.add_argument("--boosting_method", default="none", choices = ["none", "RVBLR", "RF", "AdaBoost", "SGBoost", "GBoost", "NGBoost", "SVML", "SVM_RBF", "LR"],
                           help="variant calling boosting method")
 
+    optional.add_argument("--boosting_attributes",
+                          default="QD,ReadPosRankSum,FS,SPLICEADJ,RPT,Homopolymer,Entropy,RNAEDIT,VPR,VAF,VMMF,PctExtPos",
+                          help="variant attributes on which to perform boosting")
+
+    optional.add_argument("--predictor",  help="Specify prediction method - Regressor or Classifier", required=False, default = 'classifier')
+    
     optional.add_argument("--boosting_score_threshold", default=0.05, type=float,
                           help="minimum score threshold for boosted variant selection")
+
 
     optional.add_argument("--no_include_read_var_pos_annotations", action="store_true", default=False,
                           help="do not include read variant position in read annotations (debugging/troubleshooting purposes only)")
